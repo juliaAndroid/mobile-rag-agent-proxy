@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  RAG Android Portfolio - thin proxy that keeps the Claude and Voyage API keys
+  server-side (SSM Parameter Store SecureString) instead of inside the APK.
+
+Parameters:
+  ClaudeKeyParamName:
+    Type: String
+    Default: /rag-proxy/claude-api-key
+  VoyageKeyParamName:
+    Type: String
+    Default: /rag-proxy/voyage-api-key
+  AllowedModels:
+    Type: String
+    Default: claude-haiku-4-5,claude-haiku-4-5-20251001
+    Description: Comma-separated model IDs the proxy will forward
+  MaxTokensCap:
+    Type: Number
+    Default: 1024
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 29
+
+Resources:
+  ProxyApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      # Throttling (token bucket): 2 requests/s steady, bursts of up to 5.
+      # Best-effort target, not a hard cap. Small numbers on purpose: this is a
+      # demo app, and it limits spend if the proxy URL leaks.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
+
+  ProxyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/
+      Handler: app.handler
+      Environment:
+        Variables:
+          CLAUDE_KEY_PARAM: !Ref ClaudeKeyParamName
+          VOYAGE_KEY_PARAM: !Ref VoyageKeyParamName
+          ALLOWED_MODELS: !Ref AllowedModels
+          MAX_TOKENS_CAP: !Ref MaxTokensCap
+      Policies:
+        - Statement:
+            # Permission 1: read exactly these two parameters, nothing else.
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ClaudeKeyParamName}
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${VoyageKeyParamName}
+            # Permission 2: decrypt the SecureString, only when the call comes through SSM.
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: "*"
+              Condition:
+                StringEquals:
+                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
+      Events:
+        Claude:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ProxyApi
+            Path: /claude/messages
+            Method: POST
+        Voyage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ProxyApi
+            Path: /voyage/embeddings
+            Method: POST
+
+  # Explicit log group so logs expire instead of piling up forever.
+  ProxyFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProxyFunction}
+      RetentionInDays: 14
+
+Outputs:
+  ProxyBaseUrl:
+    Description: Base URL for the Android client (ends with /; append claude/messages or voyage/embeddings)
+    Value: !Sub https://${ProxyApi}.execute-api.${AWS::Region}.amazonaws.com/
