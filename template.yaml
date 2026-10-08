@@ -50,19 +50,15 @@ Resources:
           MAX_TOKENS_CAP: !Ref MaxTokensCap
       Policies:
         - Statement:
-            # Permission 1: read exactly these two parameters, nothing else.
+            # Read exactly these two parameters, nothing else. There is deliberately no kms:Decrypt
+            # statement: the parameters use the default AWS-managed key (alias/aws/ssm), whose key policy
+            # already lets SSM decrypt for the account (verified by removing the statement: the keys still
+            # load). A customer-managed key would need kms:Decrypt added here.
             - Effect: Allow
               Action: ssm:GetParameters
               Resource:
                 - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${ClaudeKeyParamName}
                 - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${VoyageKeyParamName}
-            # Permission 2: decrypt the SecureString, only when the call comes through SSM.
-            - Effect: Allow
-              Action: kms:Decrypt
-              Resource: "*"
-              Condition:
-                StringEquals:
-                  kms:ViaService: !Sub ssm.${AWS::Region}.amazonaws.com
       Events:
         Claude:
           Type: HttpApi

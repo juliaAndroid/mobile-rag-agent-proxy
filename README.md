@@ -58,9 +58,17 @@ The request body is the same JSON the app already sends to the provider; the pro
      -d '{"model":"voyage-4","input":["ping"]}'
    ```
 
-## IAM: why two permissions
+Run the unit tests (offline; boto3 and the outgoing HTTP call are replaced):
 
-`ssm:GetParameters` (scoped to the two parameter ARNs) lets the function read the parameters; `kms:Decrypt` (restricted with `kms:ViaService` to SSM) lets SSM decrypt the SecureString on the function's behalf. When the parameter is encrypted with a customer-managed KMS key, missing the second one produces an `AccessDeniedException` that looks like an SSM problem but isn't.
+```bash
+python3 -m unittest discover -s tests
+```
+
+## IAM: one permission
+
+The function's role has a single statement: `ssm:GetParameters`, scoped to the two parameter ARNs. There is no `kms:Decrypt` statement. The parameters are SecureStrings encrypted with the default AWS-managed key (`alias/aws/ssm`), whose key policy already lets SSM decrypt for the account, so reading them works without any extra KMS permission. This was verified by removing the statement from a deployed stack and checking that the function still loaded both keys from fresh containers (the keys are cached per container, so a fresh container is what proves it).
+
+If the parameters were ever encrypted with a customer-managed KMS key, the function would also need `kms:Decrypt` on that key, and without it the failure would be an `AccessDeniedException` that looks like an SSM problem but is not.
 
 ## Operations
 
