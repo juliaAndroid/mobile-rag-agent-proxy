@@ -42,6 +42,8 @@ Resources:
     Properties:
       CodeUri: src/
       Handler: app.handler
+      Tags:
+        Project: mobile-rag-agent
       Environment:
         Variables:
           CLAUDE_KEY_PARAM: !Ref ClaudeKeyParamName
